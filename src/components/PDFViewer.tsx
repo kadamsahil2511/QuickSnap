@@ -56,6 +56,9 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
   const [caseStep, setCaseStep] = useState<'paragraph' | 'questions'>('paragraph');
   const [previewSection, setPreviewSection] = useState<PDFSection | null>(null);
   const [margins, setMargins] = useState<MarginSettings>({ left: 0, right: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<{ x: number; y: number } | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -106,7 +109,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
     };
   }, [pdf, currentPage, scale]);
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isBreakpointMode || !canvasRef.current) return;
     
     const canvas = canvasRef.current;
@@ -114,47 +117,65 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
     const rect = container.getBoundingClientRect();
     
     const y = e.clientY - rect.top + container.scrollTop;
+    const x = e.clientX - rect.left;
 
-    // Validate position for end points
-    if (currentPointType === 'end') {
-      const lastStartPoint = points[points.length - 1];
-      if (lastStartPoint && y <= lastStartPoint.y) {
-        return;
-      }
+    setIsDragging(true);
+    setSelectionStart({ x, y });
+    setSelectionEnd({ x, y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDragging || !canvasRef.current || !selectionStart) return;
+
+    const canvas = canvasRef.current;
+    const container = canvas.parentElement!;
+    const rect = container.getBoundingClientRect();
+    
+    const y = e.clientY - rect.top + container.scrollTop;
+    const x = e.clientX - rect.left;
+
+    if (y > selectionStart.y) {
+      setSelectionEnd({ x, y });
     }
+  };
 
-    // Validate position for start points
-    if (currentPointType === 'start' && points.length > 0) {
-      const lastEndPoint = points[points.length - 1];
-      if (lastEndPoint && y <= lastEndPoint.y) {
-        return;
-      }
-    }
+  const handleMouseUp = () => {
+    if (!isDragging || !selectionStart || !selectionEnd) return;
 
-    setPoints(prev => {
-      const newPoint = { 
-        y, 
-        type: currentPointType,
+    // Only add points if there's a meaningful selection (some minimum height)
+    const minSelectionHeight = 10;
+    if (selectionEnd.y - selectionStart.y >= minSelectionHeight) {
+      const startPoint = { 
+        y: selectionStart.y, 
+        type: 'start' as const,
         timestamp: new Date().toISOString()
       };
-      const newPoints = [...prev, newPoint];
-      setCurrentPointType(newPoint.type === 'start' ? 'end' : 'start');
+      const endPoint = { 
+        y: selectionEnd.y, 
+        type: 'end' as const,
+        timestamp: new Date().toISOString()
+      };
 
-      // Automatically create sections for case-based questions when we have a complete pair
-      if (sectionType.type === 'case' && newPoint.type === 'end') {
-        const startPoint = newPoints[newPoints.length - 2];
-        const endPoint = newPoint;
+      setPoints(prev => {
+        const newPoints = [...prev, startPoint, endPoint];
 
-        if (caseStep === 'paragraph') {
-          handleCaseParagraphCapture(startPoint, endPoint);
-        } else {
-          handleCaseQuestionCapture([{ start: startPoint, end: endPoint }]);
+        // Automatically create sections for case-based questions
+        if (sectionType.type === 'case') {
+          if (caseStep === 'paragraph') {
+            handleCaseParagraphCapture(startPoint, endPoint);
+          } else {
+            handleCaseQuestionCapture([{ start: startPoint, end: endPoint }]);
+          }
+          return [];
         }
-        return []; // Clear points after creating section
-      }
 
-      return newPoints;
-    });
+        return newPoints;
+      });
+    }
+
+    setIsDragging(false);
+    setSelectionStart(null);
+    setSelectionEnd(null);
   };
 
   const removePoint = (index: number) => {
@@ -689,7 +710,10 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
               <div 
                 ref={containerRef}
                 className="relative bg-white rounded-lg shadow-lg mx-auto"
-                onClick={handleCanvasClick}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
                 style={{ 
                   maxHeight: 'calc(100vh - 6rem)', 
                   overflow: 'auto',
@@ -700,54 +724,69 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
                 <div className="relative">
                   <canvas ref={canvasRef} className="rounded-lg" />
                   {marginGuides}
-                </div>
-                
-                {/* Breakpoint markers */}
-                {isBreakpointMode && (
-                  <div className="absolute inset-0 pointer-events-none">
-                    {points.map((point, index) => (
-                      <div
-                        key={index}
-                        className="absolute left-0 right-0 flex items-center justify-between px-2 group pointer-events-auto"
-                        style={{ 
-                          top: `${point.y}px`,
-                          transform: 'translateY(-1px)',
-                          zIndex: 10
-                        }}
-                      >
-                        <div className={`w-full h-0.5 ${point.type === 'start' ? 'bg-green-500' : 'bg-red-500'}`} />
-                        <div className="flex items-center">
-                          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white shadow-sm border mr-2">
-                            {point.type === 'start' ? 'Start' : 'End'}
-                          </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removePoint(index);
-                            }}
-                            className="p-1 rounded-full bg-gray-500 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-600"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
 
-                {/* Instructions overlay */}
-                {isBreakpointMode && (
-                  <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-2">
-                    <div className="bg-black bg-opacity-75 text-white text-xs px-3 py-1.5 rounded-full">
-                      Click to add {currentPointType === 'start' ? 'start' : 'end'} point
-                    </div>
-                    {points.length > 0 && currentPointType === 'end' && (
-                      <div className="text-xs text-gray-600 bg-white px-3 py-1 rounded-full shadow">
-                        End point must be below the start point
+                  {/* Selection overlay */}
+                  {isDragging && selectionStart && selectionEnd && (
+                    <div 
+                      className="absolute pointer-events-none bg-blue-500 bg-opacity-20 border-2 border-blue-500"
+                      style={{
+                        left: `${margins.left}px`,
+                        right: `${margins.right}px`,
+                        top: `${selectionStart.y}px`,
+                        height: `${selectionEnd.y - selectionStart.y}px`
+                      }}
+                    >
+                      <div className="absolute -left-20 top-0 bg-green-500 text-white text-xs px-2 py-0.5 rounded">
+                        Start
                       </div>
-                    )}
-                  </div>
-                )}
+                      <div className="absolute -left-20 bottom-0 bg-red-500 text-white text-xs px-2 py-0.5 rounded">
+                        End
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Existing breakpoint markers for already selected points */}
+                  {isBreakpointMode && (
+                    <div className="absolute inset-0 pointer-events-none">
+                      {points.map((point, index) => (
+                        <div
+                          key={index}
+                          className="absolute left-0 right-0 flex items-center justify-between px-2 group pointer-events-auto"
+                          style={{ 
+                            top: `${point.y}px`,
+                            transform: 'translateY(-1px)',
+                            zIndex: 10
+                          }}
+                        >
+                          <div className={`w-full h-0.5 ${point.type === 'start' ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <div className="flex items-center">
+                            <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white shadow-sm border mr-2">
+                              {point.type === 'start' ? 'Start' : 'End'}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removePoint(index);
+                              }}
+                              className="p-1 rounded-full bg-gray-500 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-600"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Instructions overlay */}
+                  {isBreakpointMode && !isDragging && (
+                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2">
+                      <div className="bg-black bg-opacity-75 text-white text-xs px-3 py-1.5 rounded-full">
+                        Click and drag to select area
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}
