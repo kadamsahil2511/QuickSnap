@@ -134,28 +134,33 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       }
     }
 
-    setPoints(prev => {
-      const newPoint = { 
-        y, 
-        type: currentPointType,
-        timestamp: new Date().toISOString()
-      };
-      const newPoints = [...prev, newPoint];
-      setCurrentPointType(newPoint.type === 'start' ? 'end' : 'start');
+    const newPoint = { 
+      y, 
+      type: currentPointType,
+      timestamp: new Date().toISOString()
+    };
 
-      // Automatically create sections for case-based questions when we have a complete pair
+    setPoints(prev => {
+      const newPoints = [...prev, newPoint];
+      
+      // For case-based questions, handle point pairs
       if (sectionType.type === 'case' && newPoint.type === 'end') {
         const startPoint = newPoints[newPoints.length - 2];
-        const endPoint = newPoint;
-
-        if (caseStep === 'paragraph') {
-          handleCaseParagraphCapture(startPoint, endPoint);
-        } else {
-          handleCaseQuestionCapture([{ start: startPoint, end: endPoint }]);
-        }
+        
+        // Process the points after state update
+        setTimeout(() => {
+          if (caseStep === 'paragraph') {
+            handleCaseParagraphCapture(startPoint, newPoint);
+          } else {
+            handleCaseQuestionCapture([{ start: startPoint, end: newPoint }]);
+          }
+        }, 0);
+        
         return []; // Clear points after creating section
       }
 
+      // Switch point type for next click
+      setCurrentPointType(newPoint.type === 'start' ? 'end' : 'start');
       return newPoints;
     });
   };

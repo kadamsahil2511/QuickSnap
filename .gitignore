@@ -24,4 +24,4 @@ dist-ssr
 *.sw?
 
 # PDF.js worker
-public/pdf.worker.min.js
+!public/pdf.worker.min.js

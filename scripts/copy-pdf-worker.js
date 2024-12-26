@@ -1,27 +1,15 @@
-import { copyFileSync, mkdirSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { createRequire } from 'module';
+const fs = require('fs');
+const path = require('path');
 
-const require = createRequire(import.meta.url);
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const sourceFile = path.resolve(__dirname, '../node_modules/pdfjs-dist/build/pdf.worker.min.js');
+const targetDir = path.resolve(__dirname, '../public');
+const targetFile = path.resolve(targetDir, 'pdf.worker.min.js');
 
-// Ensure the public directory exists
-try {
-  mkdirSync(join(__dirname, '../public'), { recursive: true });
-} catch (err) {
-  // Directory already exists, ignore error
+// Create public directory if it doesn't exist
+if (!fs.existsSync(targetDir)) {
+  fs.mkdirSync(targetDir, { recursive: true });
 }
 
-// Copy the worker file from the correct path
-const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.min.js');
-const destinationPath = join(__dirname, '../public/pdf.worker.min.js');
-
-try {
-  copyFileSync(workerPath, destinationPath);
-  console.log('PDF.js worker file copied to public directory');
-} catch (err) {
-  console.error('Error copying PDF.js worker file:', err);
-  process.exit(1);
-} 
+// Copy the worker file
+fs.copyFileSync(sourceFile, targetFile);
+console.log('PDF.js worker file copied to public directory'); 
