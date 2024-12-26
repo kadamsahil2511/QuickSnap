@@ -1,14 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 import { PDFDocumentProxy } from 'pdfjs-dist';
 
-// Get the base URL for the worker
-const pdfjsWorkerPath = new URL(
-  'pdfjs-dist/build/pdf.worker.min.js',
-  import.meta.url
-).toString();
-
-// Initialize PDF.js worker with the correct path
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerPath;
+// Initialize PDF.js worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
 
 export class PDFLoadError extends Error {
   constructor(message: string) {

@@ -6,10 +6,9 @@
   "scripts": {
     "prepare": "node scripts/copy-pdf-worker.js",
     "dev": "npm run prepare && vite",
-    "build": "npm run copy-pdfjs-worker && vite build",
+    "build": "npm run prepare && vite build",
     "lint": "eslint .",
-    "preview": "vite preview",
-    "copy-pdfjs-worker": "cp node_modules/pdfjs-dist/build/pdf.worker.min.js public/"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

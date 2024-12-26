@@ -56,9 +56,6 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
   const [caseStep, setCaseStep] = useState<'paragraph' | 'questions'>('paragraph');
   const [previewSection, setPreviewSection] = useState<PDFSection | null>(null);
   const [margins, setMargins] = useState<MarginSettings>({ left: 0, right: 0 });
-  const [showMarginModal, setShowMarginModal] = useState(false);
-  const [tempMargins, setTempMargins] = useState<MarginSettings>({ left: 0, right: 0 });
-  const [isDraggingMargin, setIsDraggingMargin] = useState<'left' | 'right' | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -91,9 +88,9 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
 
     const renderCurrentPage = async () => {
       if (pdf && canvasRef.current && mounted) {
-        try {
+      try {
           await renderPage(pdf, currentPage, canvasRef.current, scale);
-        } catch (err) {
+      } catch (err) {
           if (mounted) {
             setError(err instanceof Error ? err.message : 'Failed to render page');
           }
@@ -134,33 +131,28 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       }
     }
 
-    const newPoint = { 
-      y, 
-      type: currentPointType,
-      timestamp: new Date().toISOString()
-    };
-
     setPoints(prev => {
+      const newPoint = { 
+        y, 
+        type: currentPointType,
+        timestamp: new Date().toISOString()
+      };
       const newPoints = [...prev, newPoint];
-      
-      // For case-based questions, handle point pairs
+      setCurrentPointType(newPoint.type === 'start' ? 'end' : 'start');
+
+      // Automatically create sections for case-based questions when we have a complete pair
       if (sectionType.type === 'case' && newPoint.type === 'end') {
         const startPoint = newPoints[newPoints.length - 2];
-        
-        // Process the points after state update
-        setTimeout(() => {
-          if (caseStep === 'paragraph') {
-            handleCaseParagraphCapture(startPoint, newPoint);
-          } else {
-            handleCaseQuestionCapture([{ start: startPoint, end: newPoint }]);
-          }
-        }, 0);
-        
+        const endPoint = newPoint;
+
+        if (caseStep === 'paragraph') {
+          handleCaseParagraphCapture(startPoint, endPoint);
+        } else {
+          handleCaseQuestionCapture([{ start: startPoint, end: endPoint }]);
+        }
         return []; // Clear points after creating section
       }
 
-      // Switch point type for next click
-      setCurrentPointType(newPoint.type === 'start' ? 'end' : 'start');
       return newPoints;
     });
   };
@@ -189,15 +181,11 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
   };
 
   const handleSectionTypeSelect = (type: 'instruction' | 'question' | 'case') => {
-    if (type === 'case') {
-      setShowTypeModal(true);
-    } else {
-      setSectionType({ type });
-      setIsBreakpointMode(true);
-      setShowTypeModal(false);
-      setCaseSection(null);
-      setCaseStep('paragraph');
-    }
+    setSectionType({ type });
+    setIsBreakpointMode(true);
+    setShowTypeModal(false);
+    setCaseSection(null);
+    setCaseStep('paragraph');
   };
 
   const handleCaseSetup = (questionCount: number) => {
@@ -272,7 +260,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
 
           return {
             id: crypto.randomUUID(),
-            pageNumber: currentPage,
+        pageNumber: currentPage,
             startY: start.y,
             endY: end.y,
             captureStartTime: start.timestamp,
@@ -331,18 +319,20 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       const context = sectionCanvas.getContext('2d');
       if (!context) throw new Error('Could not get canvas context');
 
-      sectionCanvas.width = canvasRef.current.width;
+      const effectiveWidth = canvasRef.current.width - margins.left - margins.right;
+      sectionCanvas.width = effectiveWidth;
       sectionCanvas.height = height;
 
+      // Draw the section with margins
       context.drawImage(
         canvasRef.current,
-        0,
+        margins.left,
         startPoint.y,
-        canvasRef.current.width,
+        effectiveWidth,
         height,
         0,
         0,
-        canvasRef.current.width,
+        effectiveWidth,
         height
       );
 
@@ -354,6 +344,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       });
       setCaseStep('questions');
       setCurrentPointType('start');
+      setPoints([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to capture case paragraph');
     } finally {
@@ -367,53 +358,86 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
 
     try {
       const caseId = crypto.randomUUID();
-      const paragraphHeight = caseSection.endY - caseSection.startY;
+      const questionHeight = sections[0].end.y - sections[0].start.y;
 
-      const questionSections = await Promise.all(
-        sections.map(async (section, index) => {
-          const questionCanvas = await createSectionWithMargins(
-            section.start.y,
-            section.end.y,
-            canvasRef.current!
-          );
+      // Create a combined canvas for paragraph + question
+      const combinedCanvas = document.createElement('canvas');
+      const combinedContext = combinedCanvas.getContext('2d')!;
 
-          return {
-            id: crypto.randomUUID(),
-            pageNumber: currentPage,
-            startY: section.start.y,
-            endY: section.end.y,
-            captureStartTime: section.start.timestamp,
-            captureEndTime: section.end.timestamp,
-            timestamp: new Date().toISOString(),
-            imageUrl: questionCanvas.toDataURL('image/jpeg', 0.8),
-            type: 'case-question',
-            questionNumber: questionCounter + index,
-            caseGroup: caseId
-          };
-        })
+      // Create temporary canvas for paragraph
+      const paragraphCanvas = document.createElement('canvas');
+      const paragraphContext = paragraphCanvas.getContext('2d')!;
+      const paragraphImage = await createImageFromDataURL(caseSection.paragraphImage);
+      paragraphCanvas.width = paragraphImage.width;
+      paragraphCanvas.height = paragraphImage.height;
+      paragraphContext.drawImage(paragraphImage, 0, 0);
+
+      // Create temporary canvas for question
+      const questionCanvas = document.createElement('canvas');
+      const questionContext = questionCanvas.getContext('2d')!;
+      questionCanvas.width = canvasRef.current.width - margins.left - margins.right;
+      questionCanvas.height = questionHeight;
+      questionContext.drawImage(
+        canvasRef.current,
+        margins.left,
+        sections[0].start.y,
+        questionCanvas.width,
+        questionHeight,
+        0,
+        0,
+        questionCanvas.width,
+        questionHeight
       );
 
-      setSections(prev => [...prev, ...questionSections]);
-      setQuestionCounter(prev => prev + questionSections.length);
+      // Set dimensions for combined canvas
+      combinedCanvas.width = paragraphCanvas.width;
+      combinedCanvas.height = paragraphCanvas.height + questionCanvas.height;
 
-      // If we have all questions, reset the case state
-      if (caseSection.questions.length + 1 >= sectionType.questionCount!) {
-        setCaseSection(null);
-        setCaseStep('paragraph');
-        setIsBreakpointMode(false);
-        setSectionType({ type: 'question' });
-      } else {
-        setCurrentPointType('start');
-        setCaseSection(prev => ({
-          ...prev!,
-          questions: [...prev!.questions, { startY: sections[0].start.y, endY: sections[0].end.y, questionNumber: prev!.questions.length + 1 }]
-        }));
-      }
+      // Draw paragraph at the top
+      combinedContext.drawImage(paragraphCanvas, 0, 0);
+
+      // Draw question below paragraph
+      combinedContext.drawImage(questionCanvas, 0, paragraphCanvas.height);
+
+      // Create the section object
+      const newSection = {
+        id: crypto.randomUUID(),
+        pageNumber: currentPage,
+        startY: caseSection.startY,
+        endY: sections[0].end.y,
+        captureStartTime: sections[0].start.timestamp,
+        captureEndTime: sections[0].end.timestamp,
+        timestamp: new Date().toISOString(),
+        imageUrl: combinedCanvas.toDataURL('image/jpeg', 0.8),
+        type: 'case-question',
+        questionNumber: questionCounter,
+        caseGroup: caseId
+      };
+
+      setSections(prev => [...prev, newSection]);
+      setQuestionCounter(prev => prev + 1);
+
+      // Reset for next capture
+      setCaseSection(null);
+      setCaseStep('paragraph');
+      setCurrentPointType('start');
+      setPoints([]);
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create case question');
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Helper function to create Image from data URL
+  const createImageFromDataURL = (dataURL: string): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = dataURL;
+    });
   };
 
   const handleCreateSection = () => {
@@ -444,151 +468,26 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
     });
   };
 
-  const MarginGuides = () => (
+  const marginGuides = (
     <div className="absolute inset-0 pointer-events-none">
       {/* Left margin guide */}
       <div 
-        className="absolute top-0 bottom-0 w-0.5 bg-blue-400 cursor-ew-resize pointer-events-auto"
+        className="absolute top-0 bottom-0 border-r border-blue-400 border-dashed"
         style={{ 
           left: `${margins.left}px`,
-          backgroundColor: 'rgba(59, 130, 246, 0.5)'
+          borderColor: 'rgba(59, 130, 246, 0.5)'
         }}
-        onMouseDown={(e) => {
-          e.preventDefault();
-          setIsDraggingMargin('left');
-        }}
-      >
-        <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-4 h-12 bg-blue-500 rounded-full opacity-50" />
-      </div>
-
+      />
       {/* Right margin guide */}
       <div 
-        className="absolute top-0 bottom-0 w-0.5 bg-blue-400 cursor-ew-resize pointer-events-auto"
+        className="absolute top-0 bottom-0 border-l border-blue-400 border-dashed"
         style={{ 
           right: `${margins.right}px`,
-          backgroundColor: 'rgba(59, 130, 246, 0.5)'
+          borderColor: 'rgba(59, 130, 246, 0.5)'
         }}
-        onMouseDown={(e) => {
-          e.preventDefault();
-          setIsDraggingMargin('right');
-        }}
-      >
-        <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-4 h-12 bg-blue-500 rounded-full opacity-50" />
-      </div>
+      />
     </div>
   );
-
-  const MarginModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
-        <h3 className="text-lg font-medium mb-4">Set Page Margins</h3>
-        <div className="space-y-6">
-          <div>
-            <div className="flex justify-between mb-2">
-              <label className="text-sm font-medium text-gray-700">
-                Left Margin
-              </label>
-              <span className="text-sm text-gray-500">{tempMargins.left}px</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="200"
-              value={tempMargins.left}
-              onChange={(e) => setTempMargins(prev => ({ ...prev, left: Number(e.target.value) }))}
-              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-            />
-          </div>
-          <div>
-            <div className="flex justify-between mb-2">
-              <label className="text-sm font-medium text-gray-700">
-                Right Margin
-              </label>
-              <span className="text-sm text-gray-500">{tempMargins.right}px</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="200"
-              value={tempMargins.right}
-              onChange={(e) => setTempMargins(prev => ({ ...prev, right: Number(e.target.value) }))}
-              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-            />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 mt-6">
-          <button
-            onClick={() => setShowMarginModal(false)}
-            className="px-4 py-2 text-gray-600 hover:text-gray-900"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={() => {
-              setMargins(tempMargins);
-              setShowMarginModal(false);
-            }}
-            className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
-          >
-            Apply
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const MarginButton = () => (
-    <button
-      onClick={() => {
-        setTempMargins(margins);
-        setShowMarginModal(true);
-      }}
-      className="p-1.5 rounded-full hover:bg-gray-100 relative group"
-      title="Set Margins"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        className="w-5 h-5"
-        strokeWidth={2}
-      >
-        <path d="M21 6H3M21 12H3M21 18H3" />
-      </svg>
-      {margins.left > 0 || margins.right > 0 ? (
-        <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full" />
-      ) : null}
-    </button>
-  );
-
-  useEffect(() => {
-    if (!isDraggingMargin) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!containerRef.current) return;
-
-      const rect = containerRef.current.getBoundingClientRect();
-      if (isDraggingMargin === 'left') {
-        const newMargin = Math.max(0, e.clientX - rect.left);
-        setMargins(prev => ({ ...prev, left: newMargin }));
-      } else {
-        const newMargin = Math.max(0, rect.right - e.clientX);
-        setMargins(prev => ({ ...prev, right: newMargin }));
-      }
-    };
-
-    const handleMouseUp = () => {
-      setIsDraggingMargin(null);
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDraggingMargin]);
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -641,6 +540,30 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
                   <ZoomIn size={18} />
                 </button>
               </div>
+
+              <div className="h-6 w-px bg-gray-200 mx-1" />
+              
+              <button
+                onClick={() => {
+                  setTempMargins(margins);
+                  setShowMarginModal(true);
+                }}
+                className="p-1.5 rounded-full hover:bg-gray-100 relative group"
+                title="Set Margins"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  className="w-5 h-5"
+                  strokeWidth={2}
+                >
+                  <path d="M21 6H3M21 12H3M21 18H3" />
+                </svg>
+                {margins.left > 0 || margins.right > 0 ? (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-blue-500 rounded-full" />
+                ) : null}
+              </button>
             </div>
 
             {/* Center - Section Type Selection */}
@@ -703,68 +626,107 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
               {error}
             </div>
           ) : (
-            <div 
-              ref={containerRef} 
-              className="relative bg-white rounded-lg shadow-lg"
-              onClick={handleCanvasClick}
-              style={{ 
-                maxHeight: 'calc(100vh - 6rem)', 
-                overflow: 'auto',
-                position: 'relative',
-                cursor: isBreakpointMode ? 'crosshair' : 'default'
-              }}
-            >
-              <div className="relative">
-                <canvas ref={canvasRef} className="rounded-lg" />
-                <MarginGuides />
-              </div>
-              
-              {/* Breakpoint markers */}
-              {isBreakpointMode && (
-                <div className="absolute inset-0 pointer-events-none">
-                  {points.map((point, index) => (
-                    <div
-                      key={index}
-                      className="absolute left-0 right-0 flex items-center justify-between px-2 group pointer-events-auto"
-                      style={{ 
-                        top: `${point.y}px`,
-                        transform: 'translateY(-1px)',
-                        zIndex: 10
-                      }}
-                    >
-                      <div className={`w-full h-0.5 ${point.type === 'start' ? 'bg-green-500' : 'bg-red-500'}`} />
-                      <div className="flex items-center">
-                        <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white shadow-sm border mr-2">
-                          {point.type === 'start' ? 'Start' : 'End'}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            removePoint(index);
-                          }}
-                          className="p-1 rounded-full bg-gray-500 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-600"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Instructions overlay */}
-              {isBreakpointMode && (
-                <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-2">
-                  <div className="bg-black bg-opacity-75 text-white text-xs px-3 py-1.5 rounded-full">
-                    Click to add {currentPointType === 'start' ? 'start' : 'end'} point
+            <div className="relative w-full h-full flex items-center">
+              {/* Margin Controls */}
+              <div className="absolute left-0 top-4 bottom-4 flex flex-col justify-center">
+                <div className="bg-white p-2 rounded-lg shadow-lg">
+                  <div className="h-48 flex items-center">
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      value={margins.left}
+                      onChange={(e) => setMargins(prev => ({ ...prev, left: Number(e.target.value) }))}
+                      className="-rotate-90 w-48 origin-left"
+                    />
                   </div>
-                  {points.length > 0 && currentPointType === 'end' && (
-                    <div className="text-xs text-gray-600 bg-white px-3 py-1 rounded-full shadow">
-                      End point must be below the start point
-                    </div>
-                  )}
+                  <div className="text-center text-xs mt-2 text-gray-600">
+                    Left: {margins.left}px
+                  </div>
                 </div>
-              )}
+              </div>
+
+              <div className="absolute right-0 top-4 bottom-4 flex flex-col justify-center">
+                <div className="bg-white p-2 rounded-lg shadow-lg">
+                  <div className="h-48 flex items-center">
+                    <input
+                      type="range"
+                      min="0"
+                      max="200"
+                      value={margins.right}
+                      onChange={(e) => setMargins(prev => ({ ...prev, right: Number(e.target.value) }))}
+                      className="-rotate-90 w-48 origin-left"
+                    />
+                  </div>
+                  <div className="text-center text-xs mt-2 text-gray-600">
+                    Right: {margins.right}px
+                  </div>
+                </div>
+              </div>
+
+              <div 
+                ref={containerRef}
+                className="relative bg-white rounded-lg shadow-lg mx-auto"
+                onClick={handleCanvasClick}
+                style={{ 
+                  maxHeight: 'calc(100vh - 6rem)', 
+                  overflow: 'auto',
+                  position: 'relative',
+                  cursor: isBreakpointMode ? 'crosshair' : 'default'
+                }}
+              >
+                <div className="relative">
+                  <canvas ref={canvasRef} className="rounded-lg" />
+                  {marginGuides}
+                </div>
+                
+                {/* Breakpoint markers */}
+                {isBreakpointMode && (
+                  <div className="absolute inset-0 pointer-events-none">
+                    {points.map((point, index) => (
+                      <div
+                        key={index}
+                        className="absolute left-0 right-0 flex items-center justify-between px-2 group pointer-events-auto"
+                        style={{ 
+                          top: `${point.y}px`,
+                          transform: 'translateY(-1px)',
+                          zIndex: 10
+                        }}
+                      >
+                        <div className={`w-full h-0.5 ${point.type === 'start' ? 'bg-green-500' : 'bg-red-500'}`} />
+                        <div className="flex items-center">
+                          <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-white shadow-sm border mr-2">
+                            {point.type === 'start' ? 'Start' : 'End'}
+                          </span>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              removePoint(index);
+                            }}
+                            className="p-1 rounded-full bg-gray-500 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-600"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Instructions overlay */}
+                {isBreakpointMode && (
+                  <div className="absolute top-4 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-2">
+                    <div className="bg-black bg-opacity-75 text-white text-xs px-3 py-1.5 rounded-full">
+                      Click to add {currentPointType === 'start' ? 'start' : 'end'} point
+                    </div>
+                    {points.length > 0 && currentPointType === 'end' && (
+                      <div className="text-xs text-gray-600 bg-white px-3 py-1 rounded-full shadow">
+                        End point must be below the start point
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -863,7 +825,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
               >
                 Cancel
               </button>
-              <button
+        <button
                 onClick={() => handleCaseSetup(caseQuestionCount)}
                 className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
               >
@@ -920,7 +882,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
                   className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full text-sm hover:bg-gray-200 transition-colors"
                 >
                   Close
-                </button>
+        </button>
               </div>
             </div>
             <div className="p-4">
@@ -933,9 +895,6 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
           </div>
         </div>
       )}
-
-      {/* Add margin modal */}
-      {showMarginModal && <MarginModal />}
     </div>
   );
 };
