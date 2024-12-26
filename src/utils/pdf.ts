@@ -1,8 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 import { PDFDocumentProxy } from 'pdfjs-dist';
 
-// Initialize PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
+// Initialize PDF.js worker using CDN
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 export class PDFLoadError extends Error {
   constructor(message: string) {

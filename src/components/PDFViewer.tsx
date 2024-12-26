@@ -469,10 +469,69 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
   };
 
   const marginGuides = (
-    <div className="absolute inset-0 pointer-events-none">
+    <>
+      {/* Margin handles */}
+      <div className="absolute top-0 left-0 right-0 h-8 flex items-end">
+        {/* Left margin handle */}
+        <div
+          className="absolute bottom-2 w-4 h-8 bg-blue-500 rounded-sm cursor-ew-resize -translate-x-1/2 z-10"
+          style={{ left: margins.left }}
+          onMouseDown={(e) => {
+            const startX = e.clientX;
+            const startMargin = margins.left;
+            
+            const handleMouseMove = (e: MouseEvent) => {
+              const delta = e.clientX - startX;
+              const newMargin = Math.max(0, Math.min(startMargin + delta, canvasRef.current?.width || 0));
+              setMargins(prev => ({ ...prev, left: newMargin }));
+            };
+            
+            const handleMouseUp = () => {
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+            
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }}
+        >
+          <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-1.5 py-0.5 rounded whitespace-nowrap">
+            {Math.round(margins.left)}px
+          </div>
+        </div>
+
+        {/* Right margin handle */}
+        <div
+          className="absolute bottom-2 w-4 h-8 bg-blue-500 rounded-sm cursor-ew-resize translate-x-1/2 z-10"
+          style={{ right: margins.right }}
+          onMouseDown={(e) => {
+            const startX = e.clientX;
+            const startMargin = margins.right;
+            
+            const handleMouseMove = (e: MouseEvent) => {
+              const delta = startX - e.clientX;
+              const newMargin = Math.max(0, Math.min(startMargin + delta, canvasRef.current?.width || 0));
+              setMargins(prev => ({ ...prev, right: newMargin }));
+            };
+            
+            const handleMouseUp = () => {
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+            
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }}
+        >
+          <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-1.5 py-0.5 rounded whitespace-nowrap">
+            {Math.round(margins.right)}px
+          </div>
+        </div>
+      </div>
+
       {/* Left margin guide */}
       <div 
-        className="absolute top-0 bottom-0 border-r border-blue-400 border-dashed"
+        className="absolute top-0 bottom-0 border-r-2 border-blue-400"
         style={{ 
           left: `${margins.left}px`,
           borderColor: 'rgba(59, 130, 246, 0.5)'
@@ -480,13 +539,13 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       />
       {/* Right margin guide */}
       <div 
-        className="absolute top-0 bottom-0 border-l border-blue-400 border-dashed"
+        className="absolute top-0 bottom-0 border-l-2 border-blue-400"
         style={{ 
           right: `${margins.right}px`,
           borderColor: 'rgba(59, 130, 246, 0.5)'
         }}
       />
-    </div>
+    </>
   );
 
   return (
@@ -627,43 +686,6 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
             </div>
           ) : (
             <div className="relative w-full h-full flex items-center">
-              {/* Margin Controls */}
-              <div className="absolute left-0 top-4 bottom-4 flex flex-col justify-center">
-                <div className="bg-white p-2 rounded-lg shadow-lg">
-                  <div className="h-48 flex items-center">
-                    <input
-                      type="range"
-                      min="0"
-                      max="200"
-                      value={margins.left}
-                      onChange={(e) => setMargins(prev => ({ ...prev, left: Number(e.target.value) }))}
-                      className="-rotate-90 w-48 origin-left"
-                    />
-                  </div>
-                  <div className="text-center text-xs mt-2 text-gray-600">
-                    Left: {margins.left}px
-                  </div>
-                </div>
-              </div>
-
-              <div className="absolute right-0 top-4 bottom-4 flex flex-col justify-center">
-                <div className="bg-white p-2 rounded-lg shadow-lg">
-                  <div className="h-48 flex items-center">
-                    <input
-                      type="range"
-                      min="0"
-                      max="200"
-                      value={margins.right}
-                      onChange={(e) => setMargins(prev => ({ ...prev, right: Number(e.target.value) }))}
-                      className="-rotate-90 w-48 origin-left"
-                    />
-                  </div>
-                  <div className="text-center text-xs mt-2 text-gray-600">
-                    Right: {margins.right}px
-                  </div>
-                </div>
-              </div>
-
               <div 
                 ref={containerRef}
                 className="relative bg-white rounded-lg shadow-lg mx-auto"
