@@ -381,44 +381,40 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       const caseId = crypto.randomUUID();
       const questionHeight = sections[0].end.y - sections[0].start.y;
 
-      // Create a combined canvas for paragraph + question
+      // Create a combined canvas
       const combinedCanvas = document.createElement('canvas');
       const combinedContext = combinedCanvas.getContext('2d')!;
 
-      // Create temporary canvas for paragraph
-      const paragraphCanvas = document.createElement('canvas');
-      const paragraphContext = paragraphCanvas.getContext('2d')!;
+      // Load and get dimensions of paragraph image
       const paragraphImage = await createImageFromDataURL(caseSection.paragraphImage);
-      paragraphCanvas.width = paragraphImage.width;
-      paragraphCanvas.height = paragraphImage.height;
-      paragraphContext.drawImage(paragraphImage, 0, 0);
+      const paragraphHeight = caseSection.endY - caseSection.startY;
 
-      // Create temporary canvas for question
-      const questionCanvas = document.createElement('canvas');
-      const questionContext = questionCanvas.getContext('2d')!;
-      questionCanvas.width = canvasRef.current.width - margins.left - margins.right;
-      questionCanvas.height = questionHeight;
-      questionContext.drawImage(
+      // Set dimensions for combined canvas
+      const effectiveWidth = canvasRef.current.width - margins.left - margins.right;
+      combinedCanvas.width = effectiveWidth;
+      combinedCanvas.height = paragraphHeight + questionHeight;
+
+      // Draw paragraph at the top (using original dimensions)
+      combinedContext.drawImage(
+        paragraphImage,
+        0,
+        0,
+        effectiveWidth,
+        paragraphHeight
+      );
+
+      // Draw question directly below paragraph
+      combinedContext.drawImage(
         canvasRef.current,
         margins.left,
         sections[0].start.y,
-        questionCanvas.width,
+        effectiveWidth,
         questionHeight,
         0,
-        0,
-        questionCanvas.width,
+        paragraphHeight,
+        effectiveWidth,
         questionHeight
       );
-
-      // Set dimensions for combined canvas
-      combinedCanvas.width = paragraphCanvas.width;
-      combinedCanvas.height = paragraphCanvas.height + questionCanvas.height;
-
-      // Draw paragraph at the top
-      combinedContext.drawImage(paragraphCanvas, 0, 0);
-
-      // Draw question below paragraph
-      combinedContext.drawImage(questionCanvas, 0, paragraphCanvas.height);
 
       // Create the section object
       const newSection = {
@@ -435,7 +431,15 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
         caseGroup: caseId
       };
 
-      setSections(prev => [...prev, newSection]);
+      // Update sections without duplicating
+      setSections(prev => {
+        // Remove any existing sections with the same start and end points
+        const filteredSections = prev.filter(s => 
+          !(s.startY === newSection.startY && s.endY === newSection.endY)
+        );
+        return [...filteredSections, newSection];
+      });
+      
       setQuestionCounter(prev => prev + 1);
 
       // Reset for next capture
@@ -474,17 +478,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
       const sectionToRemove = prev.find(s => s.id === sectionId);
       if (!sectionToRemove) return prev;
 
-      // If it's a case section, remove all related questions
-      if (sectionToRemove.type === 'case') {
-        return prev.filter(s => s.caseGroup !== sectionToRemove.caseGroup);
-      }
-
-      // If it's a case question, don't allow individual deletion
-      if (sectionToRemove.type === 'case-question') {
-        return prev;
-      }
-
-      // For regular sections, just remove the one section
+      // If it's a case section or case question, just remove that specific section
       return prev.filter(s => s.id !== sectionId);
     });
   };
@@ -492,10 +486,10 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
   const marginGuides = (
     <>
       {/* Margin handles */}
-      <div className="absolute top-0 left-0 right-0 h-8 flex items-end">
+      <div className="absolute top-0 left-0 right-0 h-8">
         {/* Left margin handle */}
         <div
-          className="absolute bottom-2 w-4 h-8 bg-blue-500 rounded-sm cursor-ew-resize -translate-x-1/2 z-10"
+          className="absolute top-1/2 w-6 h-12 bg-gradient-to-r from-blue-500 to-blue-600 rounded-r-lg cursor-ew-resize -translate-x-1/2 -translate-y-1/2 shadow-lg hover:from-blue-600 hover:to-blue-700 transition-colors z-10 flex items-center justify-center"
           style={{ left: margins.left }}
           onMouseDown={(e) => {
             const startX = e.clientX;
@@ -516,14 +510,20 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
             document.addEventListener('mouseup', handleMouseUp);
           }}
         >
-          <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-1.5 py-0.5 rounded whitespace-nowrap">
+          <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
             {Math.round(margins.left)}px
+          </div>
+          {/* Handle lines */}
+          <div className="flex flex-col gap-1">
+            <div className="w-2 h-0.5 bg-white rounded-full"></div>
+            <div className="w-2 h-0.5 bg-white rounded-full"></div>
+            <div className="w-2 h-0.5 bg-white rounded-full"></div>
           </div>
         </div>
 
         {/* Right margin handle */}
         <div
-          className="absolute bottom-2 w-4 h-8 bg-blue-500 rounded-sm cursor-ew-resize translate-x-1/2 z-10"
+          className="absolute top-1/2 w-6 h-12 bg-gradient-to-l from-blue-500 to-blue-600 rounded-l-lg cursor-ew-resize translate-x-1/2 -translate-y-1/2 shadow-lg hover:from-blue-600 hover:to-blue-700 transition-colors z-10 flex items-center justify-center"
           style={{ right: margins.right }}
           onMouseDown={(e) => {
             const startX = e.clientX;
@@ -544,8 +544,14 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
             document.addEventListener('mouseup', handleMouseUp);
           }}
         >
-          <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-1.5 py-0.5 rounded whitespace-nowrap">
+          <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-gray-800 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
             {Math.round(margins.right)}px
+          </div>
+          {/* Handle lines */}
+          <div className="flex flex-col gap-1">
+            <div className="w-2 h-0.5 bg-white rounded-full"></div>
+            <div className="w-2 h-0.5 bg-white rounded-full"></div>
+            <div className="w-2 h-0.5 bg-white rounded-full"></div>
           </div>
         </div>
       </div>
@@ -555,7 +561,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
         className="absolute top-0 bottom-0 border-r-2 border-blue-400"
         style={{ 
           left: `${margins.left}px`,
-          borderColor: 'rgba(59, 130, 246, 0.5)'
+          borderColor: 'rgba(59, 130, 246, 0.3)'
         }}
       />
       {/* Right margin guide */}
@@ -563,7 +569,7 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
         className="absolute top-0 bottom-0 border-l-2 border-blue-400"
         style={{ 
           right: `${margins.right}px`,
-          borderColor: 'rgba(59, 130, 246, 0.5)'
+          borderColor: 'rgba(59, 130, 246, 0.3)'
         }}
       />
     </>
@@ -829,15 +835,13 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
                     >
                       <Eye size={14} />
                     </button>
-                    {section.type !== 'case-question' && (
-                      <button
-                        onClick={() => removeSection(section.id)}
-                        className="p-1.5 rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors"
-                        title="Remove Section"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
+                    <button
+                      onClick={() => removeSection(section.id)}
+                      className="p-1.5 rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors"
+                      title="Remove Section"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
                 <div className="p-2 border-t">
@@ -926,18 +930,16 @@ export const PDFViewer: React.FC<PDFViewerProps> = ({ file }) => {
                 {getSectionLabel(previewSection)}
               </h3>
               <div className="flex items-center gap-2">
-                {previewSection.type !== 'case-question' && (
-                  <button
-                    onClick={() => {
-                      removeSection(previewSection.id);
-                      setPreviewSection(null);
-                    }}
-                    className="px-3 py-1.5 bg-red-500 text-white rounded-full text-sm hover:bg-red-600 transition-colors flex items-center gap-1.5"
-                  >
-                    <Trash2 size={14} />
-                    <span>Remove</span>
-                  </button>
-                )}
+                <button
+                  onClick={() => {
+                    removeSection(previewSection.id);
+                    setPreviewSection(null);
+                  }}
+                  className="px-3 py-1.5 bg-red-500 text-white rounded-full text-sm hover:bg-red-600 transition-colors flex items-center gap-1.5"
+                >
+                  <Trash2 size={14} />
+                  <span>Remove</span>
+                </button>
                 <button
                   onClick={() => setPreviewSection(null)}
                   className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-full text-sm hover:bg-gray-200 transition-colors"
